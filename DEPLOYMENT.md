@@ -74,8 +74,17 @@ Render will automatically check the health of your service by pinging the root e
 - Verify `public/` directory is copied correctly in Dockerfile
 - Check that `.next/static` is copied in Dockerfile
 
+### Deprecation Warnings During Build
+You may see deprecation warnings like:
+- `rimraf@3.0.2`
+- `eslint@8.57.1`
+- `glob@7.2.3`
+- etc.
+
+**These warnings are harmless** - they come from transitive dependencies (dependencies of dependencies) used by Next.js and ESLint. They don't affect functionality or security. The `.npmrc` file is configured to minimize these warnings during Docker builds.
+
 ## Notes
 - The Dockerfile uses multi-stage builds for optimal image size
 - The final image only contains production dependencies
 - The app runs as a non-root user (`nextjs`) for security
-
+- Deprecation warnings from transitive dependencies are expected and can be safely ignored

@@ -50,6 +50,9 @@ Dockerfile
 .dockerignore
 docker-compose.yml
 
+# npm config (keep .npmrc for Docker build)
+# .npmrc
+
 # Documentation
 README.md
 *.md
