@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { generateParticleTracks, ParticleTrack } from '@/utils/particleGenerator'
+import { PROJECTILE_CONFIGS, getDefaultProjectileConfig } from '@/utils/projectileConfigs'
 import styles from './BubbleChamber.module.css'
 
 // Constants for optimization
@@ -21,8 +22,16 @@ interface LabelPosition {
   symbol: string
 }
 
-export default function BubbleChamber() {
+interface BubbleChamberProps {
+  projectileId?: string
+}
+
+export default function BubbleChamber({ projectileId }: BubbleChamberProps = { projectileId: undefined }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const defaultProjectile = getDefaultProjectileConfig()
+  const [selectedProjectile, setSelectedProjectile] = useState<string>(
+    projectileId || defaultProjectile.id
+  )
   const [tracks, setTracks] = useState<ParticleTrack[]>([])
   const [hoveredTrack, setHoveredTrack] = useState<ParticleTrack | null>(null)
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 })
@@ -148,8 +157,12 @@ export default function BubbleChamber() {
       if (track.decayProducts) {
         for (let j = 0; j < track.decayProducts.length; j++) {
           const product = track.decayProducts[j]
+          // Neutron decay produces 1 neutrino (ν̄e)
+          if (track.particleType === 'Neutrón' && product.pionNeutrinoAngle !== undefined && product.muonCharge === undefined) {
+            count += 1
+          }
           // Each pion decay produces 1 neutrino
-          if (product.pionNeutrinoAngle !== undefined) {
+          else if (product.pionNeutrinoAngle !== undefined && product.muonCharge !== undefined) {
             count += 1
           }
           // Each muon decay produces 2 neutrinos
@@ -175,8 +188,16 @@ export default function BubbleChamber() {
     
     if (totalParticles === 0) return 0
     
-    // Points per correct particle: 100 / (Número de partículas + 2)
-    const pointsPerParticle = 100 / (totalParticles + 2)
+    // Find the hint particle (first electron or positron) - it's always correct
+    let hintParticleNumber: number | null = null
+    const particleMap = particleMapForScore
+    for (let num = 1; num <= totalParticles; num++) {
+      const symbol = particleMap[num] || ''
+      if (symbol === 'e⁻' || symbol === 'e⁺') {
+        hintParticleNumber = num
+        break
+      }
+    }
     
     // Count correct particle identifications - optimized loop
     let correctParticles = 0
@@ -192,25 +213,60 @@ export default function BubbleChamber() {
       }
     }
     
-    // Points from particles
-    const particlePoints = correctParticles * pointsPerParticle
+    // Count the hint particle as correct if it exists (it's always shown as correct)
+    // Check if hint particle is already counted in correctParticles
+    let hintAlreadyCounted = false
+    if (hintParticleNumber !== null) {
+      // Find the shuffled number for the hint particle
+      const hintShuffledNum = Object.keys(reverseMapping).find(
+        shuffled => reverseMapping[parseInt(shuffled)] === hintParticleNumber
+      )
+      if (hintShuffledNum !== undefined) {
+        const hintSelectedValue = particleIdentifications[parseInt(hintShuffledNum)] || ''
+        const hintCorrectSymbol = particleMapForScore[hintParticleNumber] || ''
+        // Check if hint particle is already counted as correct
+        hintAlreadyCounted = hintSelectedValue === hintCorrectSymbol
+      }
+      // Always count hint as correct (it's shown as correct automatically)
+      if (!hintAlreadyCounted) {
+        correctParticles++
+      }
+    }
     
-    // Points from neutrinos: [100 - 100 / (Número de partículas + 2)] / (Número de neutrinos real) * (Número de neutrinos identificados correctamente)
-    const remainingPoints = 100 - 100 / (totalParticles + 2)
-    const correctNeutrinoCount = neutrinoCount !== '' && parseInt(neutrinoCount) === realNeutrinoCount ? realNeutrinoCount : 0
-    const neutrinoPoints = realNeutrinoCount > 0 
-      ? (remainingPoints / realNeutrinoCount) * correctNeutrinoCount
-      : 0
+    let particlePoints = 0
+    let neutrinoPoints = 0
+    
+    if (realNeutrinoCount > 0) {
+      // When there are neutrinos: distribute points between particles and neutrinos
+      // Total items to score: totalParticles (including hint) + realNeutrinoCount
+      // Each correct item gets: 100 / (totalParticles + realNeutrinoCount)
+      const totalItemsToScore = totalParticles + realNeutrinoCount
+      const pointsPerItem = 100 / totalItemsToScore
+      
+      // Points from particles (including hint which is always correct)
+      particlePoints = correctParticles * pointsPerItem
+      
+      // Points from neutrinos
+      const correctNeutrinoCount = neutrinoCount !== '' && parseInt(neutrinoCount) === realNeutrinoCount ? realNeutrinoCount : 0
+      neutrinoPoints = correctNeutrinoCount * pointsPerItem
+    } else {
+      // When there are NO neutrinos: all 100 points come from particles
+      // Points per correct particle: 100 / totalParticles (including hint which is always correct)
+      const pointsPerParticle = 100 / totalParticles
+      particlePoints = correctParticles * pointsPerParticle
+      neutrinoPoints = 0
+    }
     
     // Total score: sum of particle points and neutrino points
     // When all particles and neutrinos are correct, this should equal 100
+    // When there are no neutrinos and all particles are correct, this should also equal 100
     const totalScore = particlePoints + neutrinoPoints
     
     return Math.min(100, Math.max(0, totalScore))
   }, [particleIdentifications, neutrinoCount, tracks, calculateTotalParticles, calculateNeutrinoCount, particleMapForScore, reverseMapping])
 
   const generateNewEvent = useCallback(() => {
-    const newTracks = generateParticleTracks()
+    const newTracks = generateParticleTracks(selectedProjectile)
     
     // Clear caches when generating new event
     particleMapCache.current = null
@@ -258,11 +314,11 @@ export default function BubbleChamber() {
     
     setNumberMapping(mapping)
     setReverseMapping(reverse)
-  }, [calculateTotalParticles])
+  }, [calculateTotalParticles, selectedProjectile])
 
   useEffect(() => {
     generateNewEvent()
-  }, [generateNewEvent])
+  }, [generateNewEvent, selectedProjectile])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -865,22 +921,208 @@ export default function BubbleChamber() {
   ) => {
     if (!track.decayPoint || !track.decayProducts) return
 
-    // Calculate the exact end point of the pion track using the same method as drawCurvedTrack
+    // Calculate the exact end point of the track
     // This ensures the muon starts exactly where the pion ends
     const startX = track.origin.x * width
     const startY = track.origin.y * height
-    const radius = (track.radius || 0.2) * Math.min(width, height)
-    const angle = track.angle || 0
-    const length = track.length || 0.3
+    let kinkX: number
+    let kinkY: number
     
-    // Calculate arc center (same as in drawCurvedTrack)
-    const centerX = startX - Math.cos(angle) * radius
-    const centerY = startY - Math.sin(angle) * radius
-    
-    // Calculate exact end point of pion track
-    const endAngle = angle + length * Math.PI * 2
-    const kinkX = centerX + Math.cos(endAngle) * radius
-    const kinkY = centerY + Math.sin(endAngle) * radius
+    if (track.type === 'straight') {
+      // For straight tracks, calculate end point directly
+      const angle = track.angle || 0
+      const length = track.length || 0.3
+      kinkX = startX + Math.cos(angle) * length * width
+      kinkY = startY + Math.sin(angle) * length * height
+    } else {
+      // For curved tracks, use arc calculation
+      const radius = (track.radius || 0.2) * Math.min(width, height)
+      const angle = track.angle || 0
+      const length = track.length || 0.3
+      
+      // Calculate arc center (same as in drawCurvedTrack)
+      const centerX = startX - Math.cos(angle) * radius
+      const centerY = startY - Math.sin(angle) * radius
+      
+      // Calculate exact end point of track
+      const endAngle = angle + length * Math.PI * 2
+      kinkX = centerX + Math.cos(endAngle) * radius
+      kinkY = centerY + Math.sin(endAngle) * radius
+    }
+
+    // Handle muon decay case (muon entering and decaying directly: μ⁻ → e⁻ + ν̄e + νμ)
+    // Muon has charge and decayProducts with muonNeutrino1Angle and muonNeutrino2Angle but no pionNeutrinoAngle
+    const isDirectMuonDecay = (track.charge === 1 || track.charge === -1) && track.particleType === 'Muón' &&
+                               track.decayProducts && track.decayProducts.length > 0 &&
+                               track.decayProducts[0].muonNeutrino1Angle !== undefined &&
+                               track.decayProducts[0].muonNeutrino2Angle !== undefined &&
+                               track.decayProducts[0].pionNeutrinoAngle === undefined
+
+    if (isDirectMuonDecay) {
+      // For direct muon decay, electron/positron is already in tracks array
+      // We just need to draw the neutrinos
+      const product = track.decayProducts[0]
+      if (identified && product.muonNeutrino1Angle !== undefined && product.muonNeutrino2Angle !== undefined) {
+        ctx.save()
+        ctx.strokeStyle = '#ffffff' // White
+        ctx.lineWidth = 2.0 // Thicker line for better visibility
+        ctx.setLineDash([2, 4]) // Dotted line
+        ctx.globalAlpha = 0.9 // More visible
+        
+        // Calculate intersection with canvas boundaries
+        const decayX = track.decayPoint!.x * width
+        const decayY = track.decayPoint!.y * height
+        
+        // First neutrino from muon decay (νe or ν̄e)
+        const neutrino1End = getLineCanvasIntersection(
+          decayX, decayY, product.muonNeutrino1Angle, width, height
+        )
+        ctx.beginPath()
+        ctx.moveTo(decayX, decayY)
+        ctx.lineTo(neutrino1End.x, neutrino1End.y)
+        ctx.stroke()
+        
+        // Draw neutrino label at midpoint
+        const neutrino1MidX = (decayX + neutrino1End.x) / 2
+        const neutrino1MidY = (decayY + neutrino1End.y) / 2
+        // μ⁻ → e⁻ + ν̄e + νμ, so first neutrino is ν̄e
+        // μ⁺ → e⁺ + νe + ν̄μ, so first neutrino is νe
+        const neutrino1Symbol = track.charge < 0 ? 'ν̄e' : 'νe'
+        drawParticleLabel(ctx, neutrino1Symbol, neutrino1MidX, neutrino1MidY)
+        
+        // Store neutrino label position for hover detection
+        const neutrino1Track: ParticleTrack = {
+          name: track.charge < 0 ? 'Antineutrino Electrónico (ν̄e)' : 'Neutrino Electrónico (νe)',
+          symbol: neutrino1Symbol,
+          particleType: 'Neutrino',
+          charge: 0,
+          momentum: 0,
+          origin: { x: decayX / width, y: decayY / height },
+          type: 'straight',
+          color: '#ffffff',
+          width: 0.5,
+          description: 'Leptón neutro, sin carga, interacción mínima, no deja trayectoria visible',
+        }
+        labelPositions.push({
+          track: neutrino1Track,
+          x: neutrino1MidX,
+          y: neutrino1MidY,
+          symbol: neutrino1Symbol,
+        })
+        
+        // Second neutrino from muon decay (νμ or ν̄μ)
+        const neutrino2End = getLineCanvasIntersection(
+          decayX, decayY, product.muonNeutrino2Angle, width, height
+        )
+        ctx.beginPath()
+        ctx.moveTo(decayX, decayY)
+        ctx.lineTo(neutrino2End.x, neutrino2End.y)
+        ctx.stroke()
+        
+        // Draw neutrino label at midpoint
+        const neutrino2MidX = (decayX + neutrino2End.x) / 2
+        const neutrino2MidY = (decayY + neutrino2End.y) / 2
+        // μ⁻ → e⁻ + ν̄e + νμ, so second neutrino is νμ
+        // μ⁺ → e⁺ + νe + ν̄μ, so second neutrino is ν̄μ
+        const neutrino2Symbol = track.charge < 0 ? 'νμ' : 'ν̄μ'
+        drawParticleLabel(ctx, neutrino2Symbol, neutrino2MidX, neutrino2MidY)
+        
+        // Store neutrino label position for hover detection
+        const neutrino2Track: ParticleTrack = {
+          name: track.charge < 0 ? 'Neutrino Muónico (νμ)' : 'Antineutrino Muónico (ν̄μ)',
+          symbol: neutrino2Symbol,
+          particleType: 'Neutrino',
+          charge: 0,
+          momentum: 0,
+          origin: { x: decayX / width, y: decayY / height },
+          type: 'straight',
+          color: '#ffffff',
+          width: 0.5,
+          description: 'Leptón neutro, sin carga, interacción mínima, no deja trayectoria visible',
+        }
+        labelPositions.push({
+          track: neutrino2Track,
+          x: neutrino2MidX,
+          y: neutrino2MidY,
+          symbol: neutrino2Symbol,
+        })
+        
+        ctx.setLineDash([]) // Reset dash
+        ctx.globalAlpha = 1 // Reset alpha
+        ctx.restore()
+      }
+      
+      // Draw electron/positron from muon decay (already in tracks, but draw it here if needed)
+      if (product.leptonAngle !== undefined && product.muonCharge !== undefined) {
+        // Electron/positron is already drawn as part of tracks array, so we don't need to draw it again
+        // But we need to make sure it's drawn correctly
+      }
+      
+      ctx.restore()
+      return // Muon decay products (electron/positron) are already in tracks array
+    }
+
+    // Handle neutron decay case (neutron → p + e⁻ + ν̄e)
+    // Neutron has charge 0 and decayProducts with pionNeutrinoAngle but no muonCharge
+    const isNeutronDecay = track.charge === 0 && track.particleType === 'Neutrón' && 
+                           track.decayProducts && track.decayProducts.length > 0 &&
+                           track.decayProducts[0].pionNeutrinoAngle !== undefined &&
+                           track.decayProducts[0].muonCharge === undefined
+
+    if (isNeutronDecay) {
+      // For neutron decay, draw neutrino directly (proton and electron are already in tracks)
+      const product = track.decayProducts[0]
+      if (identified && product.pionNeutrinoAngle !== undefined) {
+        ctx.save()
+        ctx.strokeStyle = '#ffffff' // White
+        ctx.lineWidth = 2.0 // Thicker line for better visibility
+        ctx.setLineDash([2, 4]) // Dotted line
+        ctx.globalAlpha = 0.9 // More visible
+        
+        // Calculate intersection with canvas boundaries
+        const decayX = track.decayPoint!.x * width
+        const decayY = track.decayPoint!.y * height
+        const neutrinoEnd = getLineCanvasIntersection(
+          decayX, decayY, product.pionNeutrinoAngle, width, height
+        )
+        
+        ctx.beginPath()
+        ctx.moveTo(decayX, decayY)
+        ctx.lineTo(neutrinoEnd.x, neutrinoEnd.y)
+        ctx.stroke()
+        
+        // Draw neutrino label at midpoint
+        const neutrinoMidX = (decayX + neutrinoEnd.x) / 2
+        const neutrinoMidY = (decayY + neutrinoEnd.y) / 2
+        const neutrinoSymbol = 'ν̄e' // Antineutrino electrónico del decaimiento del neutrón
+        drawParticleLabel(ctx, neutrinoSymbol, neutrinoMidX, neutrinoMidY)
+        
+        // Store neutrino label position for hover detection
+        const neutrinoTrack: ParticleTrack = {
+          name: 'Antineutrino Electrónico (ν̄e)',
+          symbol: neutrinoSymbol,
+          particleType: 'Neutrino',
+          charge: 0,
+          momentum: 0,
+          origin: { x: decayX / width, y: decayY / height },
+          type: 'straight',
+          color: '#ffffff',
+          width: 0.5,
+          description: 'Antineutrino electrónico del decaimiento del neutrón',
+        }
+        labelPositions.push({
+          track: neutrinoTrack,
+          x: neutrinoMidX,
+          y: neutrinoMidY,
+          symbol: neutrinoSymbol,
+        })
+        
+        ctx.setLineDash([]) // Reset dash
+        ctx.globalAlpha = 1 // Reset alpha
+        ctx.restore()
+      }
+      return // Neutron decay products (proton, electron) are already in tracks array
+    }
 
     // Draw decay products (muons) as curved tracks starting from decay point
     track.decayProducts.forEach((product, index) => {
@@ -921,9 +1163,9 @@ export default function BubbleChamber() {
       if (identified && product.pionNeutrinoAngle !== undefined) {
         ctx.save()
         ctx.strokeStyle = '#ffffff' // White
-        ctx.lineWidth = 0.5
+        ctx.lineWidth = 2.0 // Thicker line for better visibility
         ctx.setLineDash([2, 4]) // Dotted line (small dots)
-        ctx.globalAlpha = 0.8 // Visible but subtle
+        ctx.globalAlpha = 0.9 // More visible
         
         // Calculate intersection with canvas boundaries
         const neutrinoEnd = getLineCanvasIntersection(
@@ -1078,9 +1320,9 @@ export default function BubbleChamber() {
         if (identified && product.muonNeutrino1Angle !== undefined && product.muonNeutrino2Angle !== undefined) {
           ctx.save()
           ctx.strokeStyle = '#ffffff' // White
-          ctx.lineWidth = 0.5
+          ctx.lineWidth = 2.0 // Thicker line for better visibility
           ctx.setLineDash([2, 4]) // Dotted line (small dots)
-          ctx.globalAlpha = 0.8 // Visible but subtle
+          ctx.globalAlpha = 0.9 // More visible
           
           // First neutrino from muon decay (νe or ν̄e)
           const neutrino1End = getLineCanvasIntersection(
@@ -1306,7 +1548,31 @@ export default function BubbleChamber() {
   return (
     <div className={styles.container}>
       <div className={styles.controls}>
-        <div className={styles.buttonGroup}>
+        <div className={styles.buttonGroup} style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          <select
+            value={selectedProjectile}
+            onChange={(e) => {
+              setSelectedProjectile(e.target.value)
+              setParticlesIdentified(false)
+              setShowForm(false)
+            }}
+            style={{
+              padding: '0.5rem 1rem',
+              fontSize: '0.9rem',
+              backgroundColor: '#1a1a1a',
+              color: '#e0e0e0',
+              border: '1px solid #4dabf7',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              minWidth: '200px',
+            }}
+          >
+            {PROJECTILE_CONFIGS.map((config: { id: string; name: string }) => (
+              <option key={config.id} value={config.id}>
+                {config.name}
+              </option>
+            ))}
+          </select>
           <button onClick={generateNewEvent} className={styles.button}>
             Generar Nuevo Evento
           </button>
@@ -1522,6 +1788,7 @@ export default function BubbleChamber() {
                   <option value="e⁻">Electrón (e⁻)</option>
                   <option value="e⁺">Positrón (e⁺)</option>
                   <option value="γ">Fotón (γ)</option>
+                  <option value="n">Neutrón (n)</option>
                   <option value="νμ">Neutrino muónico (νμ)</option>
                   <option value="ν̄μ">Antineutrino muónico (ν̄μ)</option>
                   <option value="νe">Neutrino electrónico (νe)</option>
@@ -1532,34 +1799,36 @@ export default function BubbleChamber() {
             })
           })()}
           
-          {/* Campo para número de neutrinos */}
-          <div className={styles.formField} style={{ gridColumn: '1 / -1' }}>
-            <label htmlFor="neutrino-count" className={styles.formLabel}>
-              Número de neutrinos emitidos:
-              {particlesIdentified && (
-                <span className={styles.correctAnswer}> ({calculateNeutrinoCount(tracks)})</span>
-              )}
-            </label>
-            <select
-              id="neutrino-count"
-              value={neutrinoCount}
-              onChange={(e) => setNeutrinoCount(e.target.value)}
-              className={`${styles.formSelect} ${
-                neutrinoCount !== '' && parseInt(neutrinoCount) === calculateNeutrinoCount(tracks)
-                  ? styles.correct
-                  : neutrinoCount !== '' && parseInt(neutrinoCount) !== calculateNeutrinoCount(tracks)
-                  ? styles.incorrect
-                  : ''
-              }`}
-            >
-              <option value="">-- Selecciona el número --</option>
-              {Array.from({ length: calculateNeutrinoCount(tracks) + 1 }, (_, i) => i).map((num) => (
-                <option key={num} value={num.toString()}>
-                  {num}
-                </option>
-              ))}
-            </select>
-          </div>
+          {/* Campo para número de neutrinos - solo mostrar si hay neutrinos */}
+          {calculateNeutrinoCount(tracks) > 0 && (
+            <div className={styles.formField} style={{ gridColumn: '1 / -1' }}>
+              <label htmlFor="neutrino-count" className={styles.formLabel}>
+                Número de neutrinos emitidos:
+                {particlesIdentified && (
+                  <span className={styles.correctAnswer}> ({calculateNeutrinoCount(tracks)})</span>
+                )}
+              </label>
+              <select
+                id="neutrino-count"
+                value={neutrinoCount}
+                onChange={(e) => setNeutrinoCount(e.target.value)}
+                className={`${styles.formSelect} ${
+                  neutrinoCount !== '' && parseInt(neutrinoCount) === calculateNeutrinoCount(tracks)
+                    ? styles.correct
+                    : neutrinoCount !== '' && parseInt(neutrinoCount) !== calculateNeutrinoCount(tracks)
+                    ? styles.incorrect
+                    : ''
+                }`}
+              >
+                <option value="">-- Selecciona el número --</option>
+                {Array.from({ length: calculateNeutrinoCount(tracks) + 1 }, (_, i) => i).map((num) => (
+                  <option key={num} value={num.toString()}>
+                    {num}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           
           {/* Score display */}
           <div className={styles.scoreDisplay}>

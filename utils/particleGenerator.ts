@@ -125,6 +125,15 @@ const PARTICLE_TYPES = {
     width: 2.5,
     description: 'Strange meson, may decay with visible kink',
   },
+  neutron: {
+    name: 'Neutrón (n)',
+    symbol: 'n',
+    particleType: 'Neutrón',
+    charge: 0,
+    color: '#94d2ff',
+    width: 2,
+    description: 'Barión neutro, no deja traza visible hasta desintegrarse',
+  },
 }
 
 function randomBetween(min: number, max: number): number {
@@ -216,7 +225,7 @@ function generateTrack(
   }
 }
 
-export function generateParticleTracks(): ParticleTrack[] {
+export function generateParticleTracks(projectileType: string = 'proton-1'): ParticleTrack[] {
   const tracks: ParticleTrack[] = []
   let trackCounter = 1 // Contador para numerar las partículas
 
@@ -226,6 +235,666 @@ export function generateParticleTracks(): ParticleTrack[] {
     y: 0.5,
   }
 
+  // Handle photon pair production case
+  if (projectileType === 'photon') {
+    // Incoming photon from the left border (invisible, no track)
+    const incomingPhotonOrigin = {
+      x: 0.0, // Start from left border
+      y: collisionPoint.y, // Aligned with center
+    }
+
+    // Photon pair production point (somewhere in the chamber)
+    const pairProductionPointX = randomBetween(0.3, 0.7)
+    const pairProductionPointY = collisionPoint.y + randomBetween(-0.1, 0.1)
+    const pairProductionPoint = {
+      x: pairProductionPointX,
+      y: pairProductionPointY,
+    }
+
+    // Photon energy
+    const photonEnergy = randomBetween(20, 40)
+
+    // Pair production: γ → e⁻ + e⁺
+    // Both electron and positron get roughly half the energy
+    const electronMomentum = photonEnergy * randomBetween(0.4, 0.5)
+    const positronMomentum = photonEnergy * randomBetween(0.4, 0.5)
+
+    // Direction of photon movement (from left to right, approximately 0 radians)
+    const photonDirection = Math.atan2(
+      pairProductionPoint.y - incomingPhotonOrigin.y,
+      pairProductionPoint.x - incomingPhotonOrigin.x
+    )
+
+    // Electron and positron emitted in opposite directions (opening angle)
+    // Small spread around the photon direction
+    const basePairAngle = photonDirection + randomBetween(-0.1, 0.1)
+    const openingAngle = randomBetween(Math.PI / 3, Math.PI / 2) // 60°-90° opening angle
+    
+    const electronDirection = basePairAngle - openingAngle / 2
+    const positronDirection = basePairAngle + openingAngle / 2
+
+    // Create electron track (spiral, visible)
+    const electronRadius = randomBetween(0.05, 0.12)
+    const electronTurns = randomBetween(2, 4)
+    
+    // For electron spiral, calculate base angle so tangent matches electronDirection
+    const electronHandedness = -1 // charge < 0
+    const electronBaseAngle = electronDirection - electronHandedness * (Math.PI / 2)
+    
+    const electronTrack: ParticleTrack = {
+      name: PARTICLE_TYPES.electron.name,
+      symbol: PARTICLE_TYPES.electron.symbol,
+      particleType: PARTICLE_TYPES.electron.particleType,
+      charge: -1,
+      momentum: electronMomentum,
+      origin: pairProductionPoint,
+      type: 'spiral',
+      color: PARTICLE_TYPES.electron.color,
+      width: PARTICLE_TYPES.electron.width,
+      radius: electronRadius,
+      angle: electronBaseAngle,
+      shrinkSpiral: true,
+      length: undefined,
+      turns: electronTurns,
+      decayPoint: undefined,
+      decayProducts: undefined,
+      description: 'Electrón del par producido por el fotón',
+      trackNumber: trackCounter++,
+    }
+    tracks.push(electronTrack)
+
+    // Create positron track (spiral, visible)
+    const positronRadius = randomBetween(0.05, 0.12)
+    const positronTurns = randomBetween(2, 4)
+    
+    // For positron spiral, calculate base angle so tangent matches positronDirection
+    const positronHandedness = 1 // charge > 0
+    const positronBaseAngle = positronDirection - positronHandedness * (Math.PI / 2)
+    
+    const positronTrack: ParticleTrack = {
+      name: PARTICLE_TYPES.positron.name,
+      symbol: PARTICLE_TYPES.positron.symbol,
+      particleType: PARTICLE_TYPES.positron.particleType,
+      charge: 1,
+      momentum: positronMomentum,
+      origin: pairProductionPoint,
+      type: 'spiral',
+      color: PARTICLE_TYPES.positron.color,
+      width: PARTICLE_TYPES.positron.width,
+      radius: positronRadius,
+      angle: positronBaseAngle,
+      shrinkSpiral: true,
+      length: undefined,
+      turns: positronTurns,
+      decayPoint: undefined,
+      decayProducts: undefined,
+      description: 'Positrón del par producido por el fotón',
+      trackNumber: trackCounter++,
+    }
+    tracks.push(positronTrack)
+
+    // Create photon track (invisible, neutral particle)
+    // This track won't be drawn until particles are identified
+    const photonTrack: ParticleTrack = {
+      name: PARTICLE_TYPES.gamma.name,
+      symbol: PARTICLE_TYPES.gamma.symbol,
+      particleType: PARTICLE_TYPES.gamma.particleType,
+      charge: 0, // Neutral - won't be drawn until identified
+      momentum: photonEnergy,
+      origin: incomingPhotonOrigin,
+      type: 'straight',
+      color: PARTICLE_TYPES.gamma.color,
+      width: PARTICLE_TYPES.gamma.width,
+      radius: undefined,
+      angle: photonDirection,
+      length: Math.sqrt(
+        Math.pow(pairProductionPoint.x - incomingPhotonOrigin.x, 2) +
+        Math.pow(pairProductionPoint.y - incomingPhotonOrigin.y, 2)
+      ),
+      turns: undefined,
+      decayPoint: pairProductionPoint, // Point where pair production occurs
+      decayProducts: undefined,
+      description: 'Fotón que produce un par electrón-positrón',
+      trackNumber: trackCounter++,
+    }
+    tracks.push(photonTrack)
+
+    return tracks
+  }
+
+  // Handle pion decay case
+  if (projectileType === 'pion') {
+    // Randomly choose π⁻, π⁺, or π⁰
+    const rand = Math.random()
+    let pionCharge: number
+    let pionParticle: typeof PARTICLE_TYPES.pionMinus | typeof PARTICLE_TYPES.pionPlus | typeof PARTICLE_TYPES.pionZero
+    
+    if (rand < 0.33) {
+      pionCharge = -1
+      pionParticle = PARTICLE_TYPES.pionMinus
+    } else if (rand < 0.66) {
+      pionCharge = 1
+      pionParticle = PARTICLE_TYPES.pionPlus
+    } else {
+      pionCharge = 0
+      pionParticle = PARTICLE_TYPES.pionZero
+    }
+    
+    // Incoming pion from the left border
+    const incomingPionOrigin = {
+      x: 0.0, // Start from left border
+      y: collisionPoint.y, // Aligned with center
+    }
+    
+    // Pion decay point: exactly at the middle of the screen (horizontally)
+    const decayPoint = {
+      x: 0.5, // Middle of the screen
+      y: collisionPoint.y, // Center vertically
+    }
+    
+    // Pion momentum
+    const pionMomentum = randomBetween(20, 40)
+    
+    // Direction of pion movement: horizontal (from left to right)
+    const pionDirection = 0 // Horizontal (0 radians = pointing right)
+    
+    // Pion track: straight line from origin to decay point
+    const pionLength = Math.sqrt(
+      Math.pow(decayPoint.x - incomingPionOrigin.x, 2) +
+      Math.pow(decayPoint.y - incomingPionOrigin.y, 2)
+    )
+    
+    // Handle π⁰ decay separately (π⁰ → γ + e⁺ + e⁻)
+    if (pionCharge === 0) {
+      // π⁰ decay point: same as regular pion decay point (middle of screen)
+      const pi0DecayPoint = decayPoint
+      
+      // Pion length to reach π⁰ decay point
+      const pi0Length = pionLength
+      
+      // Create π⁰ track
+      const pi0Track: ParticleTrack = {
+        name: pionParticle.name,
+        symbol: pionParticle.symbol,
+        particleType: pionParticle.particleType,
+        charge: 0,
+        momentum: pionMomentum,
+        origin: incomingPionOrigin,
+        type: 'straight',
+        color: pionParticle.color,
+        width: pionParticle.width,
+        radius: undefined,
+        angle: pionDirection,
+        length: pi0Length,
+        turns: undefined,
+        decayPoint: pi0DecayPoint,
+        decayProducts: undefined,
+        description: 'Pión neutro que decae en fotón, electrón y positrón',
+        trackNumber: trackCounter++,
+      }
+      tracks.push(pi0Track)
+      
+      // Photon (γ) from π⁰ decay
+      const gammaAngle = pionDirection + randomBetween(-Math.PI / 8, Math.PI / 8)
+      const gammaLength = 0.25
+      const gammaTrack: ParticleTrack = {
+        name: PARTICLE_TYPES.gamma.name,
+        symbol: PARTICLE_TYPES.gamma.symbol,
+        particleType: PARTICLE_TYPES.gamma.particleType,
+        charge: 0,
+        momentum: pionMomentum * 0.5,
+        origin: pi0DecayPoint,
+        type: 'straight',
+        color: PARTICLE_TYPES.gamma.color,
+        width: PARTICLE_TYPES.gamma.width,
+        radius: undefined,
+        angle: gammaAngle,
+        length: gammaLength,
+        turns: undefined,
+        decayPoint: undefined,
+        decayProducts: undefined,
+        description: 'Fotón del decaimiento de π⁰',
+        trackNumber: trackCounter++,
+      }
+      tracks.push(gammaTrack)
+      
+      // e⁻ and e⁺ pair from π⁰ decay
+      const pairSeparation = 0.015
+      const pairOrigin = {
+        x: pi0DecayPoint.x + Math.cos(gammaAngle) * pairSeparation,
+        y: pi0DecayPoint.y + Math.sin(gammaAngle) * pairSeparation,
+      }
+      
+      // Electron and positron directions (opposite directions)
+      const basePairAngle = gammaAngle + randomBetween(-0.1, 0.1)
+      const openingAngle = randomBetween(Math.PI / 3, Math.PI / 2)
+      const electronDirection = basePairAngle - openingAngle / 2
+      const positronDirection = basePairAngle + openingAngle / 2
+      
+      // Electron spiral
+      const electronRadius = randomBetween(0.05, 0.12)
+      const electronTurns = randomBetween(2, 4)
+      const electronHandedness = -1
+      const electronBaseAngle = electronDirection - electronHandedness * (Math.PI / 2)
+      
+      const electronTrack: ParticleTrack = {
+        name: PARTICLE_TYPES.electron.name,
+        symbol: PARTICLE_TYPES.electron.symbol,
+        particleType: PARTICLE_TYPES.electron.particleType,
+        charge: -1,
+        momentum: pionMomentum * 0.25,
+        origin: pairOrigin,
+        type: 'spiral',
+        color: PARTICLE_TYPES.electron.color,
+        width: PARTICLE_TYPES.electron.width,
+        radius: electronRadius,
+        angle: electronBaseAngle,
+        shrinkSpiral: true,
+        length: undefined,
+        turns: electronTurns,
+        decayPoint: undefined,
+        decayProducts: undefined,
+        description: 'Electrón del decaimiento de π⁰',
+        trackNumber: trackCounter++,
+      }
+      tracks.push(electronTrack)
+      
+      // Positron spiral
+      const positronRadius = randomBetween(0.05, 0.12)
+      const positronTurns = randomBetween(2, 4)
+      const positronHandedness = 1
+      const positronBaseAngle = positronDirection - positronHandedness * (Math.PI / 2)
+      
+      const positronTrack: ParticleTrack = {
+        name: PARTICLE_TYPES.positron.name,
+        symbol: PARTICLE_TYPES.positron.symbol,
+        particleType: PARTICLE_TYPES.positron.particleType,
+        charge: 1,
+        momentum: pionMomentum * 0.25,
+        origin: pairOrigin,
+        type: 'spiral',
+        color: PARTICLE_TYPES.positron.color,
+        width: PARTICLE_TYPES.positron.width,
+        radius: positronRadius,
+        angle: positronBaseAngle,
+        shrinkSpiral: true,
+        length: undefined,
+        turns: positronTurns,
+        decayPoint: undefined,
+        decayProducts: undefined,
+        description: 'Positrón del decaimiento de π⁰',
+        trackNumber: trackCounter++,
+      }
+      tracks.push(positronTrack)
+      
+      return tracks
+    }
+    
+    // Handle π⁻ and π⁺ decay: π⁻ → μ⁻ + ν̄μ, π⁺ → μ⁺ + νμ
+    // Muon momentum (typically 40-80% of pion momentum)
+    const muonMomentum = pionMomentum * randomBetween(0.4, 0.8)
+    
+    // Muon direction: mostly forward along pion direction with small angular spread
+    const muonAngle = pionDirection + randomBetween(-0.1, 0.1)
+    const muonMomentumX = muonMomentum * Math.cos(muonAngle)
+    const muonMomentumY = muonMomentum * Math.sin(muonAngle)
+    
+    // Calculate neutrino momentum to conserve momentum
+    const pionMomentumX = pionMomentum * Math.cos(pionDirection)
+    const pionMomentumY = pionMomentum * Math.sin(pionDirection)
+    const neutrinoMomentumX = pionMomentumX - muonMomentumX
+    const neutrinoMomentumY = pionMomentumY - muonMomentumY
+    const neutrinoMomentum = Math.sqrt(
+      neutrinoMomentumX * neutrinoMomentumX + neutrinoMomentumY * neutrinoMomentumY
+    )
+    const pionNeutrinoAngle = Math.atan2(neutrinoMomentumY, neutrinoMomentumX)
+    
+    // Muon track parameters
+    // Muon starts exactly at pion decay point
+    const muonLength = randomBetween(0.3, 0.5)
+    const muonRadius = randomBetween(0.1, 0.25) * (15 / muonMomentum)
+    
+    // For curved tracks, the angle represents the start angle of the arc from center
+    // The initial tangent (direction of motion) for a positive charge (counter-clockwise) is angle + PI/2
+    // For a negative charge (clockwise), the tangent is angle - PI/2
+    // To make the tangent match muonAngle, we set:
+    const muonTrackAngle = muonAngle - (pionCharge > 0 ? Math.PI / 2 : -Math.PI / 2)
+    
+    // Calculate muon track end point for decay
+    // Muon track starts at decayPoint (pion decay point)
+    const muonEndAngle = muonTrackAngle + muonLength * Math.PI * 2
+    const muonCenterX = decayPoint.x - Math.cos(muonTrackAngle) * muonRadius
+    const muonCenterY = decayPoint.y - Math.sin(muonTrackAngle) * muonRadius
+    const muonDecayPoint = {
+      x: muonCenterX + Math.cos(muonEndAngle) * muonRadius,
+      y: muonCenterY + Math.sin(muonEndAngle) * muonRadius,
+    }
+    
+    // Muon decays: μ⁻ → e⁻ + ν̄e + νμ or μ⁺ → e⁺ + νe + ν̄μ
+    const leptonAngle = muonEndAngle + randomBetween(0.3, 0.7)
+    const muonNeutrino1Angle = muonEndAngle - randomBetween(0.3, 0.7)
+    const muonNeutrino2Angle = muonEndAngle + Math.PI + randomBetween(-0.3, 0.3)
+    
+    // Create electron/positron track (spiral, visible)
+    const leptonMomentum = muonMomentum * randomBetween(0.4, 0.6)
+    const leptonRadius = randomBetween(0.05, 0.12)
+    const leptonTurns = randomBetween(2, 4)
+    const leptonHandedness = pionCharge > 0 ? 1 : -1 // Same charge as pion
+    const leptonBaseAngle = leptonAngle - leptonHandedness * (Math.PI / 2)
+    
+    // Note: Electron/positron from muon decay is drawn in drawDecayKink, not added to tracks array
+    // This prevents duplicate drawing
+    
+    // Create pion track with decay products
+    const pionTrack: ParticleTrack = {
+      name: pionParticle.name,
+      symbol: pionParticle.symbol,
+      particleType: pionParticle.particleType,
+      charge: pionCharge,
+      momentum: pionMomentum,
+      origin: incomingPionOrigin,
+      type: 'straight',
+      color: pionParticle.color,
+      width: pionParticle.width,
+      radius: undefined,
+      angle: pionDirection,
+      length: pionLength,
+      turns: undefined,
+      decayPoint: decayPoint,
+      decayProducts: [
+        {
+          color: '#4dabf7', // Muon color
+          width: 2,
+          angle: muonTrackAngle, // Use muonTrackAngle (for curved track drawing)
+          length: muonLength,
+          radius: muonRadius,
+          decayPoint: muonDecayPoint,
+          leptonAngle: leptonAngle,
+          muonCharge: pionCharge, // Muon charge matches pion charge
+          muonMomentum: muonMomentum,
+          pionNeutrinoAngle: pionNeutrinoAngle, // Neutrino from pion decay
+          muonNeutrino1Angle: muonNeutrino1Angle, // First neutrino from muon decay
+          muonNeutrino2Angle: muonNeutrino2Angle, // Second neutrino from muon decay
+        },
+      ],
+      description: pionCharge < 0
+        ? 'Pión negativo que decae en muón y neutrino'
+        : 'Pión positivo que decae en antimuón y neutrino',
+      trackNumber: trackCounter++,
+    }
+    tracks.push(pionTrack)
+    
+    return tracks
+  }
+
+  // Handle muon decay case
+  if (projectileType === 'muon') {
+    // Randomly choose muon (μ⁻) or antimuon (μ⁺)
+    const isMuonMinus = Math.random() < 0.5
+    const muonCharge = isMuonMinus ? -1 : 1
+    const muonParticle = isMuonMinus ? PARTICLE_TYPES.muon : PARTICLE_TYPES.muonPlus
+    
+    // Incoming muon from the left border
+    const incomingMuonOrigin = {
+      x: 0.0, // Start from left border
+      y: collisionPoint.y, // Aligned with center
+    }
+    
+    // Muon decay point (somewhere in the chamber)
+    const decayPointX = randomBetween(0.3, 0.7)
+    const decayPointY = collisionPoint.y + randomBetween(-0.1, 0.1)
+    const decayPoint = {
+      x: decayPointX,
+      y: decayPointY,
+    }
+    
+    // Muon momentum
+    const muonMomentum = randomBetween(20, 40)
+    
+    // Direction of muon movement (from left to right)
+    const muonDirection = Math.atan2(
+      decayPoint.y - incomingMuonOrigin.y,
+      decayPoint.x - incomingMuonOrigin.x
+    )
+    
+    // Muon track: straight line (like proton, photon, neutron)
+    // Calculate length from origin to decay point
+    const muonLength = Math.sqrt(
+      Math.pow(decayPoint.x - incomingMuonOrigin.x, 2) +
+      Math.pow(decayPoint.y - incomingMuonOrigin.y, 2)
+    )
+    
+    // Muon decays: μ⁻ → e⁻ + ν̄e + νμ or μ⁺ → e⁺ + νe + ν̄μ
+    // Electron/positron gets most of the momentum
+    const leptonMomentum = muonMomentum * randomBetween(0.4, 0.6)
+    
+    // Electron/positron direction: mostly forward along muon direction with angular spread
+    const leptonDirection = muonDirection + randomBetween(0.3, 0.7)
+    
+    // Create electron/positron track (spiral, visible)
+    const leptonRadius = randomBetween(0.05, 0.12)
+    const leptonTurns = randomBetween(2, 4)
+    
+    // For electron/positron spiral, calculate base angle so tangent matches leptonDirection
+    const leptonHandedness = muonCharge > 0 ? 1 : -1 // Same charge as muon
+    const leptonBaseAngle = leptonDirection - leptonHandedness * (Math.PI / 2)
+    
+    const leptonTrack: ParticleTrack = {
+      name: muonCharge < 0 ? PARTICLE_TYPES.electron.name : PARTICLE_TYPES.positron.name,
+      symbol: muonCharge < 0 ? PARTICLE_TYPES.electron.symbol : PARTICLE_TYPES.positron.symbol,
+      particleType: muonCharge < 0 ? PARTICLE_TYPES.electron.particleType : PARTICLE_TYPES.positron.particleType,
+      charge: muonCharge,
+      momentum: leptonMomentum,
+      origin: decayPoint,
+      type: 'spiral',
+      color: muonCharge < 0 ? PARTICLE_TYPES.electron.color : PARTICLE_TYPES.positron.color,
+      width: muonCharge < 0 ? PARTICLE_TYPES.electron.width : PARTICLE_TYPES.positron.width,
+      radius: leptonRadius,
+      angle: leptonBaseAngle,
+      shrinkSpiral: true,
+      length: undefined,
+      turns: leptonTurns,
+      decayPoint: undefined,
+      decayProducts: undefined,
+      description: muonCharge < 0 
+        ? 'Electrón del decaimiento del muón'
+        : 'Positrón del decaimiento del antimuón',
+      trackNumber: trackCounter++,
+    }
+    tracks.push(leptonTrack)
+    
+    // Two neutrinos from muon decay
+    const neutrino1Angle = muonDirection - randomBetween(0.3, 0.7)
+    const neutrino2Angle = muonDirection + Math.PI + randomBetween(-0.3, 0.3)
+    
+    // Create muon track
+    const muonTrack: ParticleTrack = {
+      name: muonParticle.name,
+      symbol: muonParticle.symbol,
+      particleType: muonParticle.particleType,
+      charge: muonCharge,
+      momentum: muonMomentum,
+      origin: incomingMuonOrigin,
+      type: 'straight',
+      color: muonParticle.color,
+      width: muonParticle.width,
+      radius: undefined,
+      angle: muonDirection,
+      length: muonLength,
+      turns: undefined,
+      decayPoint: decayPoint,
+      decayProducts: [
+        {
+          color: '#ffffff', // Neutrino color
+          width: 0.5,
+          angle: neutrino1Angle,
+          length: 0.5, // Will extend to canvas edge
+          radius: undefined,
+          decayPoint: undefined,
+          leptonAngle: leptonDirection, // Electron/positron angle
+          muonCharge: muonCharge, // Store muon charge
+          muonMomentum: muonMomentum, // Store muon momentum
+          pionNeutrinoAngle: undefined,
+          muonNeutrino1Angle: neutrino1Angle, // First neutrino from muon decay
+          muonNeutrino2Angle: neutrino2Angle, // Second neutrino from muon decay
+        },
+      ],
+      description: muonCharge < 0
+        ? 'Muón que se desintegra en electrón y dos neutrinos'
+        : 'Antimuón que se desintegra en positrón y dos neutrinos',
+      trackNumber: trackCounter++,
+    }
+    tracks.push(muonTrack)
+    
+    return tracks
+  }
+
+  // Handle neutron decay case
+  if (projectileType === 'neutron') {
+    // Incoming neutron from the left border (invisible, no track)
+    const incomingNeutronOrigin = {
+      x: 0.0, // Start from left border
+      y: collisionPoint.y, // Aligned with center
+    }
+
+    // Neutron decay point (somewhere in the chamber, not at the center)
+    const decayPointX = randomBetween(0.3, 0.7)
+    const decayPointY = collisionPoint.y + randomBetween(-0.1, 0.1)
+    const decayPoint = {
+      x: decayPointX,
+      y: decayPointY,
+    }
+
+    // Neutron momentum
+    const neutronMomentum = randomBetween(30, 50)
+
+    // Neutron decay: n → p + e⁻ + ν̄e
+    // Momentum conservation: p_n = p_p + p_e + p_ν
+    
+    // Proton gets most of the momentum (baryon number conservation)
+    const protonMomentum = neutronMomentum * randomBetween(0.5, 0.7)
+    const electronMomentum = neutronMomentum * randomBetween(0.2, 0.3)
+    
+    // Direction of neutron movement (from left to right, approximately 0 radians)
+    // The neutron comes from the left border and moves toward the decay point
+    const neutronDirection = Math.atan2(
+      decayPoint.y - incomingNeutronOrigin.y,
+      decayPoint.x - incomingNeutronOrigin.x
+    )
+    
+    // Both proton and electron emitted forward (in neutron's direction of motion)
+    // Small angular spread around the forward direction
+    const protonDirection = neutronDirection + randomBetween(-0.15, 0.15) // Small spread forward (~±8.6°)
+    const electronDirection = neutronDirection + randomBetween(-0.25, 0.25) // Small spread forward (~±14.3°)
+    // Neutrino can go in different direction to conserve momentum
+    const neutrinoAngle = neutronDirection + randomBetween(-Math.PI / 2, Math.PI / 2) // Can go sideways or backward
+    
+    // Create proton track (curved, visible)
+    // For curved tracks, the angle represents the initial radius direction from center to start point
+    // The tangent (initial direction) for a positive charge (counterclockwise) is: tangent = angle + π/2
+    // So to get tangent = protonDirection, we need: angle = protonDirection - π/2
+    const protonRadius = randomBetween(0.15, 0.3) * (50 / protonMomentum)
+    const protonLength = randomBetween(0.3, 0.5)
+    const protonAngle = protonDirection - Math.PI / 2 // Adjust for curved track convention (positive charge curves counterclockwise)
+    
+    const protonTrack: ParticleTrack = {
+      name: PARTICLE_TYPES.proton.name,
+      symbol: PARTICLE_TYPES.proton.symbol,
+      particleType: PARTICLE_TYPES.proton.particleType,
+      charge: 1,
+      momentum: protonMomentum,
+      origin: decayPoint,
+      type: 'curved',
+      color: PARTICLE_TYPES.proton.color,
+      width: PARTICLE_TYPES.proton.width,
+      radius: protonRadius,
+      angle: protonAngle,
+      length: protonLength,
+      turns: undefined,
+      decayPoint: undefined,
+      decayProducts: undefined,
+      description: 'Protón del decaimiento del neutrón',
+      trackNumber: trackCounter++,
+    }
+    tracks.push(protonTrack)
+
+    // Create electron track (spiral, visible)
+    const electronRadius = randomBetween(0.05, 0.12)
+    const electronTurns = randomBetween(2, 4)
+    
+    // For electron spiral, calculate base angle so tangent matches electronDirection
+    // For shrinking spirals with negative charge (clockwise), tangent = baseAngle - π/2
+    // So: baseAngle = electronDirection + π/2
+    const electronHandedness = -1 // charge < 0
+    const electronBaseAngle = electronDirection - electronHandedness * (Math.PI / 2)
+    
+    const electronTrack: ParticleTrack = {
+      name: PARTICLE_TYPES.electron.name,
+      symbol: PARTICLE_TYPES.electron.symbol,
+      particleType: PARTICLE_TYPES.electron.particleType,
+      charge: -1,
+      momentum: electronMomentum,
+      origin: decayPoint,
+      type: 'spiral',
+      color: PARTICLE_TYPES.electron.color,
+      width: PARTICLE_TYPES.electron.width,
+      radius: electronRadius,
+      angle: electronBaseAngle,
+      shrinkSpiral: true,
+      length: undefined,
+      turns: electronTurns,
+      decayPoint: undefined,
+      decayProducts: undefined,
+      description: 'Electrón del decaimiento del neutrón',
+      trackNumber: trackCounter++,
+    }
+    tracks.push(electronTrack)
+
+    // Create neutron track (invisible, neutral particle)
+    // This track won't be drawn until particles are identified
+    const neutronTrack: ParticleTrack = {
+      name: PARTICLE_TYPES.neutron.name,
+      symbol: PARTICLE_TYPES.neutron.symbol,
+      particleType: PARTICLE_TYPES.neutron.particleType,
+      charge: 0, // Neutral - won't be drawn until identified
+      momentum: neutronMomentum,
+      origin: incomingNeutronOrigin,
+      type: 'straight',
+      color: PARTICLE_TYPES.neutron.color,
+      width: PARTICLE_TYPES.neutron.width,
+      radius: undefined,
+      angle: neutronDirection,
+      length: Math.sqrt(
+        Math.pow(decayPoint.x - incomingNeutronOrigin.x, 2) +
+        Math.pow(decayPoint.y - incomingNeutronOrigin.y, 2)
+      ),
+      turns: undefined,
+      decayPoint: decayPoint,
+      decayProducts: [
+        {
+          color: '#ffffff', // Neutrino color
+          width: 0.5,
+          angle: neutrinoAngle,
+          length: 0.5, // Will extend to canvas edge
+          radius: undefined,
+          decayPoint: undefined,
+          leptonAngle: undefined,
+          muonCharge: undefined,
+          muonMomentum: undefined,
+          pionNeutrinoAngle: neutrinoAngle, // Store neutrino angle here
+          muonNeutrino1Angle: undefined,
+          muonNeutrino2Angle: undefined,
+        },
+      ],
+      description: 'Neutrón que se desintegra en protón, electrón y antineutrino electrónico',
+      trackNumber: trackCounter++,
+    }
+    tracks.push(neutronTrack)
+
+    return tracks
+  }
+
+  // Original proton-proton collision code
   // Incoming proton from the left border
   const incomingProtonOrigin = {
     x: 0.0, // Start from left border

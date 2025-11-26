@@ -2,6 +2,7 @@
 
 import Image from 'next/image'
 import BubbleChamber from '@/components/BubbleChamber'
+import ReleaseVersion from '@/components/ReleaseVersion'
 
 export default function Home() {
   return (
@@ -33,6 +34,24 @@ export default function Home() {
           fontStyle: 'italic' 
         }}>
           Desarrollado en Cursor por Jorge I. Zuluaga, Doctor Z (2025)
+          <br />
+          <a 
+            href="https://github.com/seap-udea/cloud_academy" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            style={{ 
+              color: '#888', 
+              textDecoration: 'none',
+              marginLeft: '0.5rem',
+              marginRight: '0.5rem'
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.color = '#4dabf7'}
+            onMouseLeave={(e) => e.currentTarget.style.color = '#888'}
+          >
+            GitHub
+          </a>
+          <span style={{ color: '#555', marginLeft: '0.5rem', marginRight: '0.5rem' }}>|</span>
+          <ReleaseVersion />
         </footer>
       </div>
     </main>
