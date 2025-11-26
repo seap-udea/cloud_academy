@@ -1,5 +1,6 @@
 'use client'
 
+import Image from 'next/image'
 import BubbleChamber from '@/components/BubbleChamber'
 
 export default function Home() {
@@ -7,9 +8,18 @@ export default function Home() {
     <main style={{ minHeight: '100vh', padding: '2rem' }}>
       <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
         <header style={{ marginBottom: '2rem', textAlign: 'center' }}>
-          <h1 style={{ fontSize: '2.5rem', marginBottom: '0.5rem', color: '#ffffff' }}>
-            Bubble Academy
-          </h1>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', marginBottom: '0.5rem' }}>
+            <Image 
+              src="/drz.webp" 
+              alt="Doctor Z Logo" 
+              width={80} 
+              height={80}
+              style={{ objectFit: 'contain', marginBottom: '0.5rem' }}
+            />
+            <h1 style={{ fontSize: '2.5rem', margin: 0, color: '#ffffff' }}>
+              Cloud Academy
+            </h1>
+          </div>
           <p style={{ fontSize: '1.1rem', color: '#b0b0b0', marginBottom: '1rem' }}>
             Visualización interactiva de las trazas en una cámara de burbujas
           </p>

@@ -4,6 +4,16 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { generateParticleTracks, ParticleTrack } from '@/utils/particleGenerator'
 import styles from './BubbleChamber.module.css'
 
+// Constants for optimization
+const LABEL_THRESHOLD = 30
+const NOISE_DENSITY = 0.0005
+const GRID_SIZE = 50
+const TRACK_HOVER_THRESHOLD = 0.05
+const PAN_STEP = 20
+const ZOOM_MIN = 0.5
+const ZOOM_MAX = 3
+const ZOOM_FACTOR = 1.1
+
 interface LabelPosition {
   track: ParticleTrack
   x: number
@@ -31,6 +41,12 @@ export default function BubbleChamber() {
 
   // Track counter for decay products (electrons/positrons from muons)
   const decayProductCounterRef = useRef(0)
+  
+  // Cache refs for performance optimization
+  const particleMapCache = useRef<{ tracks: ParticleTrack[]; map: Record<number, string> } | null>(null)
+  const totalParticlesCache = useRef<{ tracks: ParticleTrack[]; count: number } | null>(null)
+  const neutrinoCountCache = useRef<{ tracks: ParticleTrack[]; count: number } | null>(null)
+  const mouseMoveTimeoutRef = useRef<number | null>(null)
 
   // Generate decorative spirals fixed to particle tracks - regenerate when tracks change
   const decorativeSpirals = useMemo(() => {
@@ -82,37 +98,56 @@ export default function BubbleChamber() {
     return map
   }, [])
 
-  // Calculate total number of particles (including decay products)
+  // Calculate total number of particles (including decay products) - optimized with cache
   const calculateTotalParticles = useCallback((tracks: ParticleTrack[]): number => {
+    // Cache check
+    if (totalParticlesCache.current && totalParticlesCache.current.tracks === tracks) {
+      return totalParticlesCache.current.count
+    }
+    
     let total = 0
     // Count main tracks with trackNumber (includes protons, pions, π⁰, e⁻/e⁺ from π⁰)
-    const mainTracks = tracks.filter(t => t.trackNumber !== undefined)
-    total += mainTracks.length
+    for (let i = 0; i < tracks.length; i++) {
+      if (tracks[i].trackNumber !== undefined) {
+        total++
+      }
+    }
     
     // Count decay products: muons from pions, electrons/positrons from muons
-    tracks.forEach(track => {
+    for (let i = 0; i < tracks.length; i++) {
+      const track = tracks[i]
       if (track.decayProducts) {
-        track.decayProducts.forEach(product => {
+        for (let j = 0; j < track.decayProducts.length; j++) {
+          const product = track.decayProducts[j]
           if (product.muonCharge !== undefined) {
             total += 1 // Muon from pion decay
             if (product.leptonAngle !== undefined) {
               total += 1 // Electron/positron from muon decay
             }
           }
-        })
+        }
       }
-    })
+    }
     
+    // Cache the result
+    totalParticlesCache.current = { tracks, count: total }
     return total
   }, [])
 
-  // Calculate total number of neutrinos emitted
+  // Calculate total number of neutrinos emitted - optimized with cache
   const calculateNeutrinoCount = useCallback((tracks: ParticleTrack[]): number => {
+    // Cache check
+    if (neutrinoCountCache.current && neutrinoCountCache.current.tracks === tracks) {
+      return neutrinoCountCache.current.count
+    }
+    
     let count = 0
     
-    tracks.forEach(track => {
+    for (let i = 0; i < tracks.length; i++) {
+      const track = tracks[i]
       if (track.decayProducts) {
-        track.decayProducts.forEach(product => {
+        for (let j = 0; j < track.decayProducts.length; j++) {
+          const product = track.decayProducts[j]
           // Each pion decay produces 1 neutrino
           if (product.pionNeutrinoAngle !== undefined) {
             count += 1
@@ -121,13 +156,18 @@ export default function BubbleChamber() {
           if (product.muonNeutrino1Angle !== undefined && product.muonNeutrino2Angle !== undefined) {
             count += 2
           }
-        })
+        }
       }
-    })
+    }
     
+    // Cache the result
+    neutrinoCountCache.current = { tracks, count }
     return count
   }, [])
 
+  // Memoize particle map for score calculation
+  const particleMapForScore = useMemo(() => getParticleMap(tracks), [tracks, getParticleMap])
+  
   // Calculate score based on correct particle identifications
   const calculateScore = useCallback((): number => {
     const totalParticles = calculateTotalParticles(tracks)
@@ -138,20 +178,19 @@ export default function BubbleChamber() {
     // Points per correct particle: 100 / (Número de partículas + 2)
     const pointsPerParticle = 100 / (totalParticles + 2)
     
-    // Count correct particle identifications
+    // Count correct particle identifications - optimized loop
     let correctParticles = 0
-    const particleMap = getParticleMap(tracks)
-    
-    Object.keys(particleIdentifications).forEach((shuffledNumStr) => {
-      const shuffledNum = parseInt(shuffledNumStr)
+    const identKeys = Object.keys(particleIdentifications)
+    for (let i = 0; i < identKeys.length; i++) {
+      const shuffledNum = parseInt(identKeys[i])
       const originalNum = reverseMapping[shuffledNum] ?? shuffledNum
-      const correctSymbol = particleMap[originalNum] || ''
+      const correctSymbol = particleMapForScore[originalNum] || ''
       const selectedValue = particleIdentifications[shuffledNum] || ''
       
       if (selectedValue === correctSymbol) {
         correctParticles++
       }
-    })
+    }
     
     // Points from particles
     const particlePoints = correctParticles * pointsPerParticle
@@ -168,10 +207,16 @@ export default function BubbleChamber() {
     const totalScore = particlePoints + neutrinoPoints
     
     return Math.min(100, Math.max(0, totalScore))
-  }, [particleIdentifications, neutrinoCount, tracks, calculateTotalParticles, calculateNeutrinoCount, getParticleMap, reverseMapping])
+  }, [particleIdentifications, neutrinoCount, tracks, calculateTotalParticles, calculateNeutrinoCount, particleMapForScore, reverseMapping])
 
   const generateNewEvent = useCallback(() => {
     const newTracks = generateParticleTracks()
+    
+    // Clear caches when generating new event
+    particleMapCache.current = null
+    totalParticlesCache.current = null
+    neutrinoCountCache.current = null
+    
     setTracks(newTracks)
     setParticlesIdentified(false) // Reset identification when generating new event
     setParticleIdentifications({}) // Reset form identifications
@@ -181,7 +226,13 @@ export default function BubbleChamber() {
     setPanX(0) // Reset pan to center
     setPanY(0)
     // Reset decay product counter - start from max track number + 1
-    const maxTrackNumber = Math.max(...newTracks.map(t => t.trackNumber || 0), 0)
+    let maxTrackNumber = 0
+    for (let i = 0; i < newTracks.length; i++) {
+      const trackNum = newTracks[i].trackNumber || 0
+      if (trackNum > maxTrackNumber) {
+        maxTrackNumber = trackNum
+      }
+    }
     decayProductCounterRef.current = maxTrackNumber
     
     // Create number mapping with shuffle (keep 1 fixed for incoming proton)
@@ -198,11 +249,12 @@ export default function BubbleChamber() {
     
     const mapping: Record<number, number> = {}
     const reverse: Record<number, number> = {}
-    numbers.forEach((original, index) => {
-      const shuffledNum = shuffled[index]
+    for (let i = 0; i < numbers.length; i++) {
+      const original = numbers[i]
+      const shuffledNum = shuffled[i]
       mapping[original] = shuffledNum
       reverse[shuffledNum] = original
-    })
+    }
     
     setNumberMapping(mapping)
     setReverseMapping(reverse)
@@ -274,23 +326,23 @@ export default function BubbleChamber() {
     ctx.restore()
 
     // Draw grid (subtle) - use logical coordinates
+    // Optimized: batch grid lines
     ctx.save()
     ctx.scale(dpr, dpr)
     ctx.strokeStyle = '#1a1a1a'
     ctx.lineWidth = 0.5
-    const gridSize = 50
-    for (let x = 0; x < width; x += gridSize) {
-      ctx.beginPath()
+    ctx.beginPath()
+    // Vertical lines
+    for (let x = 0; x < width; x += GRID_SIZE) {
       ctx.moveTo(x, 0)
       ctx.lineTo(x, height)
-      ctx.stroke()
     }
-    for (let y = 0; y < height; y += gridSize) {
-      ctx.beginPath()
+    // Horizontal lines
+    for (let y = 0; y < height; y += GRID_SIZE) {
       ctx.moveTo(0, y)
       ctx.lineTo(width, y)
-      ctx.stroke()
     }
+    ctx.stroke()
     ctx.restore()
 
     // Draw particle tracks and collect label positions, applying zoom around center
@@ -1148,7 +1200,8 @@ export default function BubbleChamber() {
     }
   }
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  // Throttle mouse move for better performance
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current
     if (!canvas) return
 
@@ -1160,7 +1213,7 @@ export default function BubbleChamber() {
 
     setMousePos({ x: e.clientX, y: e.clientY })
 
-    // Handle panning with left mouse button
+    // Handle panning with left mouse button (no throttling for panning)
     if (isDragging) {
       const deltaX = pixelX - dragStart.x
       const deltaY = pixelY - dragStart.y
@@ -1171,70 +1224,84 @@ export default function BubbleChamber() {
       return // Don't process hover when dragging
     }
 
-    // First check if mouse is over a label (if particles are identified)
-    let hoveredLabelTrack: ParticleTrack | null = null
-    if (particlesIdentified && labelPositions.length > 0) {
-      const labelThreshold = 30 // pixels
-      let closestLabel: LabelPosition | null = null
-      let minLabelDist = Infinity
-      
-      for (const label of labelPositions) {
-        const dist = Math.sqrt(
-          Math.pow(pixelX - label.x, 2) + Math.pow(pixelY - label.y, 2)
-        )
-        if (dist < labelThreshold && dist < minLabelDist) {
-          minLabelDist = dist
-          closestLabel = label
-        }
-      }
-      
-      if (closestLabel) {
-        hoveredLabelTrack = closestLabel.track
-      }
-    }
-
-    // If hovering over a label, use that track
-    if (hoveredLabelTrack) {
-      setHoveredTrack(hoveredLabelTrack)
+    // Throttle hover detection to improve performance
+    if (mouseMoveTimeoutRef.current) {
       return
     }
 
-    // Otherwise, find closest track
-    let closest: ParticleTrack | null = null
-    let minDist = Infinity
-
-    tracks.forEach((track) => {
-      const dist = Math.sqrt(
-        Math.pow(track.origin.x - x, 2) + Math.pow(track.origin.y - y, 2)
-      )
-      if (dist < 0.05 && dist < minDist) {
-        minDist = dist
-        closest = track
+    mouseMoveTimeoutRef.current = window.setTimeout(() => {
+      mouseMoveTimeoutRef.current = null
+      
+      // First check if mouse is over a label (if particles are identified)
+      let hoveredLabelTrack: ParticleTrack | null = null
+      if (particlesIdentified && labelPositions.length > 0) {
+        let closestLabel: LabelPosition | null = null
+        let minLabelDistSq = LABEL_THRESHOLD * LABEL_THRESHOLD // Use squared distance to avoid sqrt
+        
+        for (let i = 0; i < labelPositions.length; i++) {
+          const label = labelPositions[i]
+          const dx = pixelX - label.x
+          const dy = pixelY - label.y
+          const distSq = dx * dx + dy * dy
+          if (distSq < minLabelDistSq) {
+            minLabelDistSq = distSq
+            closestLabel = label
+          }
+        }
+        
+        if (closestLabel) {
+          hoveredLabelTrack = closestLabel.track
+        }
       }
-    })
 
-    setHoveredTrack(closest)
-  }
+      // If hovering over a label, use that track
+      if (hoveredLabelTrack) {
+        setHoveredTrack(hoveredLabelTrack)
+        return
+      }
 
-  const handleMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
+      // Otherwise, find closest track
+      let closest: ParticleTrack | null = null
+      let minDistSq = TRACK_HOVER_THRESHOLD * TRACK_HOVER_THRESHOLD
+
+      for (let i = 0; i < tracks.length; i++) {
+        const track = tracks[i]
+        const dx = track.origin.x - x
+        const dy = track.origin.y - y
+        const distSq = dx * dx + dy * dy
+        if (distSq < minDistSq) {
+          minDistSq = distSq
+          closest = track
+        }
+      }
+
+      setHoveredTrack(closest)
+    }, 16) // ~60fps throttling
+  }, [isDragging, dragStart, particlesIdentified, labelPositions, tracks])
+
+  const handleMouseUp = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     if (e.button === 0) {
       setIsDragging(false)
     }
-  }
+  }, [])
 
-  const handleMouseLeave = () => {
+  const handleMouseLeave = useCallback(() => {
     setHoveredTrack(null)
     setIsDragging(false) // Stop dragging if mouse leaves canvas
-  }
+    if (mouseMoveTimeoutRef.current) {
+      clearTimeout(mouseMoveTimeoutRef.current)
+      mouseMoveTimeoutRef.current = null
+    }
+  }, [])
 
-  const clamp = (value: number, min: number, max: number) =>
-    Math.min(max, Math.max(min, value))
+  const clamp = useCallback((value: number, min: number, max: number) =>
+    Math.min(max, Math.max(min, value)), [])
 
-  const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
+  const handleWheel = useCallback((e: React.WheelEvent<HTMLCanvasElement>) => {
     e.preventDefault()
-    const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1
-    setViewScale((prev) => clamp(prev * zoomFactor, 0.5, 3))
-  }
+    const zoomFactor = e.deltaY > 0 ? 1 / ZOOM_FACTOR : ZOOM_FACTOR
+    setViewScale((prev) => clamp(prev * zoomFactor, ZOOM_MIN, ZOOM_MAX))
+  }, [clamp])
 
   return (
     <div className={styles.container}>
@@ -1301,7 +1368,7 @@ export default function BubbleChamber() {
             </div>
             <div className={styles.panButtons}>
               <button
-                onClick={() => setPanY((prev) => prev - 20)}
+                onClick={() => setPanY((prev) => prev - PAN_STEP)}
                 className={styles.panButton}
                 title="Mover Arriba"
               >
@@ -1309,14 +1376,14 @@ export default function BubbleChamber() {
               </button>
               <div className={styles.panHorizontal}>
                 <button
-                  onClick={() => setPanX((prev) => prev - 20)}
+                  onClick={() => setPanX((prev) => prev - PAN_STEP)}
                   className={styles.panButton}
                   title="Mover Izquierda"
                 >
                   <span className={styles.panIcon}>←</span>
                 </button>
                 <button
-                  onClick={() => setPanX((prev) => prev + 20)}
+                  onClick={() => setPanX((prev) => prev + PAN_STEP)}
                   className={styles.panButton}
                   title="Mover Derecha"
                 >
@@ -1324,7 +1391,7 @@ export default function BubbleChamber() {
                 </button>
               </div>
               <button
-                onClick={() => setPanY((prev) => prev + 20)}
+                onClick={() => setPanY((prev) => prev + PAN_STEP)}
                 className={styles.panButton}
                 title="Mover Abajo"
               >
